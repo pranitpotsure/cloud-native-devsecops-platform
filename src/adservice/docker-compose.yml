@@ -1,0 +1,57 @@
+# =============================================================================
+# AdService - Docker Compose for Local Development
+#
+# Usage:
+#   docker compose up --build          # Build and run
+#   docker compose up -d               # Run in background
+#   docker compose logs -f adservice   # Follow logs
+#   docker compose down                # Stop and remove containers
+# =============================================================================
+
+version: "3.8"
+
+services:
+  adservice:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adservice:local
+    container_name: adservice
+    ports:
+      - "9555:9555"    # gRPC port
+    environment:
+      # Server config
+      PORT: "9555"
+
+      # Logging
+      LOG_LEVEL: "INFO"
+
+      # Disable GCP-originated features (already removed, but kept as guards)
+      DISABLE_TRACING: "true"
+      DISABLE_STATS: "true"
+
+      # ---------------------------------------------------------------
+      # To enable OpenTelemetry tracing, uncomment and set:
+      # DISABLE_TRACING: "false"
+      # OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      # OTEL_SERVICE_NAME: "adservice"
+      # ---------------------------------------------------------------
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c 'cat /dev/null > /dev/tcp/localhost/9555' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ---------------------------------------------------------------
+  # Optional: Add other microservices here as you refactor them
+  # ---------------------------------------------------------------
+  # frontend:
+  #   image: frontend:local
+  #   ports:
+  #     - "8080:8080"
+  #   depends_on:
+  #     - adservice

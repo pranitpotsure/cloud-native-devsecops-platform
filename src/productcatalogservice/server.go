@@ -1,0 +1,184 @@
+// productcatalogservice/server.go - Cloud-Agnostic Refactored Version
+//
+// CHANGES:
+//   - Removed cloud.google.com/go/profiler (GCP Cloud Profiler)
+//   - Removed cloud.google.com/go/alloydbconn (GCP AlloyDB)
+//   - Removed cloud.google.com/go/secretmanager (GCP Secret Manager)
+//   - Removed jackc/pgx (was used by AlloyDB integration only)
+//   - Removed initProfiling() function entirely
+//   - Products loaded from local JSON file (products.json) — cloud-agnostic
+//   - OpenTelemetry tracing kept (OTLP, works with any backend)
+
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"net"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	pb "github.com/GoogleCloudPlatform/microservices-demo/src/productcatalogservice/genproto"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"google.golang.org/grpc"
+)
+
+var (
+	catalogMutex *sync.Mutex
+	log          *logrus.Logger
+	extraLatency time.Duration
+
+	port = "3550"
+
+	reloadCatalog bool
+)
+
+func init() {
+	log = logrus.New()
+	log.Formatter = &logrus.JSONFormatter{
+		FieldMap: logrus.FieldMap{
+			logrus.FieldKeyTime:  "timestamp",
+			logrus.FieldKeyLevel: "severity",
+			logrus.FieldKeyMsg:   "message",
+		},
+		TimestampFormat: time.RFC3339Nano,
+	}
+	log.Out = os.Stdout
+	catalogMutex = &sync.Mutex{}
+}
+
+func main() {
+	if os.Getenv("ENABLE_TRACING") == "1" {
+		err := initTracing()
+		if err != nil {
+			log.Warnf("failed to start tracer: %+v", err)
+		}
+	} else {
+		log.Info("Tracing disabled.")
+	}
+
+	// GCP Profiler removed. For AWS: use AWS CodeGuru Profiler (optional).
+	log.Info("GCP Profiler disabled. Running in cloud-agnostic mode.")
+
+	flag.Parse()
+
+	if s := os.Getenv("EXTRA_LATENCY"); s != "" {
+		v, err := time.ParseDuration(s)
+		if err != nil {
+			log.Fatalf("failed to parse EXTRA_LATENCY (%s) as time.Duration: %+v", v, err)
+		}
+		extraLatency = v
+		log.Infof("extra latency enabled (duration: %v)", extraLatency)
+	} else {
+		extraLatency = time.Duration(0)
+	}
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
+	go func() {
+		for {
+			sig := <-sigs
+			log.Printf("Received signal: %s", sig)
+			if sig == syscall.SIGUSR1 {
+				reloadCatalog = true
+				log.Infof("Enable catalog reloading")
+			} else {
+				reloadCatalog = false
+				log.Infof("Disable catalog reloading")
+			}
+		}
+	}()
+
+	if os.Getenv("PORT") != "" {
+		port = os.Getenv("PORT")
+	}
+	log.Infof("starting grpc server at :%s", port)
+	run(port)
+	select {}
+}
+
+func run(port string) string {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	otel.SetTextMapPropagator(
+		propagation.NewCompositeTextMapPropagator(
+			propagation.TraceContext{}, propagation.Baggage{}))
+
+	srv := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()))
+
+	svc := &productCatalog{}
+	err = loadCatalog(&svc.catalog)
+	if err != nil {
+		log.Fatalf("could not parse product catalog: %v", err)
+	}
+
+	pb.RegisterProductCatalogServiceServer(srv, svc)
+	healthcheck := health.NewServer()
+	healthpb.RegisterHealthServer(srv, healthcheck)
+	go srv.Serve(listener)
+
+	return listener.Addr().String()
+}
+
+// initTracing sets up OpenTelemetry with OTLP gRPC exporter.
+// Compatible with: Jaeger, AWS X-Ray (ADOT), Grafana Tempo, Zipkin, etc.
+func initTracing() error {
+	var (
+		collectorAddr string
+		collectorConn *grpc.ClientConn
+	)
+
+	ctx := context.Background()
+	mustMapEnv(&collectorAddr, "COLLECTOR_SERVICE_ADDR")
+	mustConnGRPC(ctx, &collectorConn, collectorAddr)
+
+	exporter, err := otlptracegrpc.New(
+		ctx,
+		otlptracegrpc.WithGRPCConn(collectorConn))
+	if err != nil {
+		log.Warnf("Failed to create trace exporter: %v", err)
+	}
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	otel.SetTracerProvider(tp)
+	return err
+}
+
+func mustMapEnv(target *string, envKey string) {
+	v := os.Getenv(envKey)
+	if v == "" {
+		panic(fmt.Sprintf("environment variable %q not set", envKey))
+	}
+	*target = v
+}
+
+func mustConnGRPC(ctx context.Context, conn **grpc.ClientConn, addr string) {
+	var err error
+	_, cancel := context.WithTimeout(ctx, time.Second*3)
+	defer cancel()
+	*conn, err = grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+	if err != nil {
+		panic(errors.Wrapf(err, "grpc: failed to connect %s", addr))
+	}
+}

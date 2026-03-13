@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AdService - Cloud-Agnostic Log4j2 Configuration
+  
+  REFACTORED from original:
+  - Removed all Stackdriver/GCP-specific JSON keys:
+      logging.googleapis.com/trace
+      logging.googleapis.com/spanId
+      logging.googleapis.com/traceSampled
+  - Now outputs clean JSON to stdout suitable for:
+      * Local Docker / Docker Compose
+      * AWS CloudWatch Logs (log driver captures stdout)
+      * Any log aggregator (Fluentd, Logstash, Loki, etc.)
+  - Log level controllable via LOG_LEVEL env var (defaults to INFO)
+-->
+
+<Configuration status="WARN">
+  <Appenders>
+    <Console name="STDOUT" target="SYSTEM_OUT">
+      <!--
+        Clean JSON log format - works with any log aggregator.
+        Fields: timestamp, level, logger, message, thread
+        AWS CloudWatch, Datadog, ELK, Loki all parse this natively.
+      -->
+      <JsonLayout compact="true" eventEol="true" includeTimeMillis="false">
+        <KeyValuePair key="timestamp" value="$${date:yyyy-MM-dd'T'HH:mm:ss.SSS'Z'}"/>
+        <KeyValuePair key="service"   value="adservice"/>
+      </JsonLayout>
+    </Console>
+  </Appenders>
+
+  <Loggers>
+    <!-- Suppress verbose internal gRPC/Netty logs at INFO level -->
+    <Logger name="io.grpc.netty" level="INFO"/>
+    <Logger name="io.netty"      level="INFO"/>
+    <Logger name="sun.net"       level="INFO"/>
+
+    <!-- Root logger: use LOG_LEVEL env var, default INFO -->
+    <Root level="${env:LOG_LEVEL:-INFO}">
+      <AppenderRef ref="STDOUT"/>
+    </Root>
+  </Loggers>
+</Configuration>

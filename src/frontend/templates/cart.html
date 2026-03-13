@@ -1,0 +1,531 @@
+<!--
+  cart.html - Enhanced with Razorpay-style realistic payment UI
+  Changes: Professional payment section, card type detection, INR default, processing animation
+-->
+
+{{ define "cart" }}
+    {{ template "header" . }}
+
+    <div {{ with $.platform_css }} class="{{.}}" {{ end }}>
+        <span class="platform-flag">
+            {{$.platform_name}}
+        </span>
+    </div>
+
+    <main role="main" class="cart-sections">
+
+        {{ if eq (len $.items) 0 }}
+        <section class="empty-cart-section">
+            <h3>Your shopping cart is empty!</h3>
+            <p>Items you add to your shopping cart will appear here.</p>
+            <a class="cymbal-button-primary" href="{{ $.baseUrl }}/" role="button">Continue Shopping</a>
+        </section>
+        {{ else }}
+        <section class="container">
+            <div class="row">
+
+                <div class="col-lg-6 col-xl-5 offset-xl-1 cart-summary-section">
+
+                    <div class="row mb-3 py-2">
+                        <div class="col-4 pl-md-0">
+                            <h3>Cart ({{ $.cart_size }})</h3>
+                        </div>
+                        <div class="col-8 pr-md-0 text-right">
+                            <form method="POST" action="{{ $.baseUrl }}/cart/empty">
+                                <button class="cymbal-button-secondary cart-summary-empty-cart-button" type="submit">
+                                    Empty Cart
+                                </button>
+                                <a class="cymbal-button-primary" href="{{ $.baseUrl }}/" role="button">
+                                    Continue Shopping
+                                </a>
+                            </form>
+                        </div>
+                    </div>
+
+                    {{ range $.items }}
+                    <div class="row cart-summary-item-row">
+                        <div class="col-md-4 pl-md-0">
+                            <a href="{{ $.baseUrl }}/product/{{.Item.Id}}">
+                                <img class="img-fluid" alt="" src="{{ $.baseUrl }}{{.Item.Picture}}" />
+                            </a>
+                        </div>
+                        <div class="col-md-8 pr-md-0">
+                            <div class="row">
+                                <div class="col">
+                                    <h4>{{ .Item.Name }}</h4>
+                                </div>
+                            </div>
+                            <div class="row cart-summary-item-row-item-id-row">
+                                <div class="col">
+                                    SKU #{{ .Item.Id }}
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col">
+                                    Quantity: {{ .Quantity }}
+                                </div>
+                                <div class="col pr-md-0 text-right">
+                                    <strong>
+                                        {{ renderMoney .Price }}
+                                    </strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {{ end }}
+
+                    <div class="row cart-summary-shipping-row">
+                        <div class="col pl-md-0">Shipping</div>
+                        <div class="col pr-md-0 text-right">{{ renderMoney .shipping_cost }}</div>
+                    </div>
+
+                    <div class="row cart-summary-total-row">
+                        <div class="col pl-md-0">Total</div>
+                        <div class="col pr-md-0 text-right">{{ renderMoney .total_cost }}</div>
+                    </div>
+
+                </div>
+
+                <div class="col-lg-5 offset-lg-1 col-xl-4">
+
+                    <form class="cart-checkout-form" id="checkoutForm" action="{{ $.baseUrl }}/cart/checkout" method="POST" onsubmit="return handleCheckout(event)">
+
+                        <div class="row">
+                            <div class="col">
+                                <h3>Shipping Address</h3>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="col cymbal-form-field">
+                                <label for="email">E-mail Address</label>
+                                <input type="email" id="email"
+                                    name="email" value="someone@example.com" required>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="col cymbal-form-field">
+                                <label for="street_address">Street Address</label>
+                                <input type="text" name="street_address"
+                                    id="street_address" value="1600 Amphitheatre Parkway" required>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="col cymbal-form-field">
+                                <label for="zip_code">Zip Code</label>
+                                <input type="text"
+                                    name="zip_code" id="zip_code" value="94043" required pattern="\d{4,6}">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="col cymbal-form-field">
+                                <label for="city">City</label>
+                                <input type="text" name="city" id="city"
+                                    value="Mountain View" required>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="col-md-5 cymbal-form-field">
+                                <label for="state">State</label>
+                                <input type="text" name="state" id="state"
+                                    value="CA" required>
+                            </div>
+                            <div class="col-md-7 cymbal-form-field">
+                                <label for="country">Country</label>
+                                <input type="text" id="country"
+                                    placeholder="Country Name"
+                                    name="country" value="United States" required>
+                            </div>
+                        </div>
+
+                        <!-- ── Payment Section ── -->
+                        <div class="row mt-4">
+                            <div class="col">
+                                <h3 class="payment-method-heading">Payment Details</h3>
+                            </div>
+                        </div>
+
+                        <!-- Accepted Cards Banner -->
+                        <div class="accepted-cards-row">
+                            <span class="accepted-label">Accepted cards</span>
+                            <div class="card-logos">
+                                <span class="card-logo visa-logo" id="logo-visa">
+                                    <svg viewBox="0 0 50 16" width="44" height="14"><text x="0" y="13" font-family="Arial" font-weight="900" font-size="14" fill="#1A1F71">VISA</text></svg>
+                                </span>
+                                <span class="card-logo mc-logo" id="logo-mastercard">
+                                    <svg viewBox="0 0 38 24" width="38" height="24">
+                                        <circle cx="14" cy="12" r="10" fill="#EB001B"/>
+                                        <circle cx="24" cy="12" r="10" fill="#F79E1B"/>
+                                        <path d="M19 5.27A10 10 0 0 1 23.73 12 10 10 0 0 1 19 18.73 10 10 0 0 1 14.27 12 10 10 0 0 1 19 5.27z" fill="#FF5F00"/>
+                                    </svg>
+                                </span>
+                            </div>
+                            <div class="secure-badge">
+                                <svg width="12" height="14" viewBox="0 0 12 14" fill="none"><path d="M6 0L0 2.5V7c0 3.31 2.56 6.41 6 7 3.44-.59 6-3.69 6-7V2.5L6 0z" fill="#22c55e"/></svg>
+                                <span>Secure Payment</span>
+                            </div>
+                        </div>
+
+                        <!-- Card Number -->
+                        <div class="form-row">
+                            <div class="col cymbal-form-field payment-field-wrapper">
+                                <label for="credit_card_number">Card Number</label>
+                                <div class="card-input-wrapper">
+                                    <input type="text" id="credit_card_number"
+                                        name="credit_card_number"
+                                        placeholder="0000 0000 0000 0000"
+                                        value="4432801561520454"
+                                        required
+                                        maxlength="19"
+                                        autocomplete="cc-number"
+                                        class="card-number-input">
+                                    <span class="card-type-indicator" id="cardTypeIndicator">
+                                        <svg id="cardIconUnknown" width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="1" y="4" width="22" height="16" rx="3" stroke="#ccc" stroke-width="1.5"/><rect x="1" y="8" width="22" height="3" fill="#eee"/></svg>
+                                        <svg id="cardIconVisa" width="44" height="14" viewBox="0 0 50 16" style="display:none"><text x="0" y="13" font-family="Arial" font-weight="900" font-size="14" fill="#1A1F71">VISA</text></svg>
+                                        <svg id="cardIconMC" width="36" height="22" viewBox="0 0 38 24" style="display:none"><circle cx="14" cy="12" r="10" fill="#EB001B"/><circle cx="24" cy="12" r="10" fill="#F79E1B"/><path d="M19 5.27A10 10 0 0 1 23.73 12 10 10 0 0 1 19 18.73 10 10 0 0 1 14.27 12 10 10 0 0 1 19 5.27z" fill="#FF5F00"/></svg>
+                                    </span>
+                                </div>
+                                <div class="card-error" id="cardNumberError"></div>
+                            </div>
+                        </div>
+
+                        <!-- Expiry + CVV -->
+                        <div class="form-row">
+                            <div class="col-md-5 cymbal-form-field">
+                                <label for="credit_card_expiration_month">Expiry Month</label>
+                                <select name="credit_card_expiration_month" id="credit_card_expiration_month">
+                                    <option value="1">01 - Jan</option>
+                                    <option value="2">02 - Feb</option>
+                                    <option value="3">03 - Mar</option>
+                                    <option value="4">04 - Apr</option>
+                                    <option value="5">05 - May</option>
+                                    <option value="6">06 - Jun</option>
+                                    <option value="7">07 - Jul</option>
+                                    <option value="8">08 - Aug</option>
+                                    <option value="9">09 - Sep</option>
+                                    <option value="10">10 - Oct</option>
+                                    <option value="11">11 - Nov</option>
+                                    <option value="12">12 - Dec</option>
+                                </select>
+                                <img src="{{ $.baseUrl }}/static/icons/Hipster_DownArrow.svg" alt="" class="cymbal-dropdown-chevron">
+                            </div>
+                            <div class="col-md-4 cymbal-form-field">
+                                <label for="credit_card_expiration_year">Year</label>
+                                <select name="credit_card_expiration_year" id="credit_card_expiration_year">
+                                {{ range $i, $y := $.expiration_years}}<option value="{{$y}}"
+                                    {{if eq $i 1 -}}
+                                        selected="selected"
+                                    {{- end}}
+                                >{{$y}}</option>{{end}}
+                                </select>
+                                <img src="{{ $.baseUrl }}/static/icons/Hipster_DownArrow.svg" alt="" class="cymbal-dropdown-chevron">
+                            </div>
+                            <div class="col-md-3 cymbal-form-field">
+                                <label for="credit_card_cvv">CVV</label>
+                                <input type="password" id="credit_card_cvv"
+                                    name="credit_card_cvv" value="672"
+                                    required pattern="\d{3,4}"
+                                    maxlength="4"
+                                    placeholder="•••"
+                                    autocomplete="cc-csc">
+                            </div>
+                        </div>
+
+                        <!-- Test Cards Helper -->
+                        <div class="test-cards-hint">
+                            <div class="test-cards-header">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#6b7280" stroke-width="1.5"/><path d="M12 8v4M12 16h.01" stroke="#6b7280" stroke-width="2" stroke-linecap="round"/></svg>
+                                <span>Test mode — use these cards</span>
+                            </div>
+                            <div class="test-cards-list">
+                                <div class="test-card-item" onclick="fillCard('4111111111111111')">
+                                    <span class="tc-badge visa-badge">VISA</span>
+                                    <span class="tc-number">4111 1111 1111 1111</span>
+                                    <span class="tc-result success">✓ Success</span>
+                                </div>
+                                <div class="test-card-item" onclick="fillCard('5500000000000004')">
+                                    <span class="tc-badge mc-badge">MC</span>
+                                    <span class="tc-number">5500 0000 0000 0004</span>
+                                    <span class="tc-result success">✓ Success</span>
+                                </div>
+                                <div class="test-card-item" onclick="fillCard('4000000000000002')">
+                                    <span class="tc-badge visa-badge">VISA</span>
+                                    <span class="tc-number">4000 0000 0000 0002</span>
+                                    <span class="tc-result fail">✗ Declined</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Place Order Button -->
+                        <div class="form-row justify-content-center mt-3">
+                            <div class="col text-center">
+                                <button class="cymbal-button-primary pay-now-btn" type="submit" id="placeOrderBtn">
+                                    <span id="btnText">Place Order</span>
+                                    <span id="btnSpinner" style="display:none">
+                                        <svg class="spin" width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" stroke-width="3"/><path d="M12 2a10 10 0 0 1 10 10" stroke="white" stroke-width="3" stroke-linecap="round"/></svg>
+                                        Processing...
+                                    </span>
+                                </button>
+                                <div class="payment-footer-note">
+                                    <svg width="11" height="13" viewBox="0 0 12 14" fill="none"><path d="M6 0L0 2.5V7c0 3.31 2.56 6.41 6 7 3.44-.59 6-3.69 6-7V2.5L6 0z" fill="#9ca3af"/></svg>
+                                    256-bit SSL encrypted &amp; secure
+                                </div>
+                            </div>
+                        </div>
+
+                    </form>
+
+                </div>
+
+            </div>
+        </section>
+        {{ end }}
+
+    </main>
+
+    {{ if $.recommendations }}
+        {{ template "recommendations" $ }}
+    {{ end }}
+
+    {{ template "footer" . }}
+
+<!-- ── Payment Styles ── -->
+<style>
+.accepted-cards-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    background: #f9fafb;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+}
+.accepted-label {
+    font-size: 11px;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+}
+.card-logos {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+}
+.card-logo {
+    display: flex;
+    align-items: center;
+    padding: 3px 6px;
+    border-radius: 4px;
+    border: 1px solid #e5e7eb;
+    background: white;
+}
+.secure-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: #22c55e;
+    white-space: nowrap;
+}
+.card-input-wrapper {
+    position: relative;
+}
+.card-number-input {
+    padding-right: 60px !important;
+    letter-spacing: 0.08em;
+    font-family: 'Courier New', monospace;
+    font-size: 15px;
+}
+.card-type-indicator {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+}
+.card-error {
+    color: #ef4444;
+    font-size: 12px;
+    margin-top: 4px;
+    min-height: 16px;
+}
+/* Test cards hint */
+.test-cards-hint {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border: 1px solid #bae6fd;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 14px 0;
+}
+.test-cards-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #0369a1;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.test-cards-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.test-card-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid #e0f2fe;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.test-card-item:hover {
+    border-color: #0284c7;
+    box-shadow: 0 2px 8px rgba(2, 132, 199, 0.15);
+    transform: translateY(-1px);
+}
+.tc-badge {
+    font-size: 9px;
+    font-weight: 800;
+    padding: 2px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+}
+.visa-badge { background: #1A1F71; color: white; }
+.mc-badge { background: #EB001B; color: white; }
+.tc-number {
+    flex: 1;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    color: #374151;
+    letter-spacing: 0.05em;
+}
+.tc-result { font-size: 11px; font-weight: 600; }
+.tc-result.success { color: #16a34a; }
+.tc-result.fail { color: #dc2626; }
+/* Processing button */
+.pay-now-btn {
+    min-width: 160px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+}
+.pay-now-btn:disabled {
+    opacity: 0.75;
+    cursor: not-allowed;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+.spin { animation: spin 0.8s linear infinite; }
+.payment-footer-note {
+    margin-top: 10px;
+    font-size: 11px;
+    color: #9ca3af;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+</style>
+
+<!-- ── Payment Scripts ── -->
+<script>
+// Card type detection
+function detectCardType(number) {
+    const n = number.replace(/\D/g, '');
+    if (/^4/.test(n)) return 'visa';
+    if (/^5[1-5]/.test(n) || /^2(2[2-9][1-9]|[3-6]\d{2}|7([01]\d|20))/.test(n)) return 'mastercard';
+    return 'unknown';
+}
+
+// Format card number with spaces
+function formatCardNumber(value) {
+    const digits = value.replace(/\D/g, '').slice(0, 16);
+    return digits.replace(/(\d{4})(?=\d)/g, '$1 ');
+}
+
+// Update card type icon
+function updateCardIcon(type) {
+    document.getElementById('cardIconUnknown').style.display = type === 'unknown' ? 'block' : 'none';
+    document.getElementById('cardIconVisa').style.display = type === 'visa' ? 'block' : 'none';
+    document.getElementById('cardIconMC').style.display = type === 'mastercard' ? 'block' : 'none';
+}
+
+// Fill card number from test cards
+function fillCard(number) {
+    const input = document.getElementById('credit_card_number');
+    input.value = number.replace(/(\d{4})(?=\d)/g, '$1 ');
+    const type = detectCardType(number);
+    updateCardIcon(type);
+    input.focus();
+}
+
+// Card number input handler
+document.getElementById('credit_card_number').addEventListener('input', function(e) {
+    const formatted = formatCardNumber(e.target.value);
+    e.target.value = formatted;
+    // Store raw digits for form submission
+    const type = detectCardType(formatted);
+    updateCardIcon(type);
+    document.getElementById('cardNumberError').textContent = '';
+});
+
+// Before submit — strip spaces from card number (server expects raw digits)
+document.getElementById('checkoutForm').addEventListener('formdata', function(e) {
+    const raw = e.formData.get('credit_card_number');
+    if (raw) e.formData.set('credit_card_number', raw.replace(/\s/g, ''));
+});
+
+// Handle checkout with processing animation
+function handleCheckout(event) {
+    const cardInput = document.getElementById('credit_card_number');
+    const rawNumber = cardInput.value.replace(/\s/g, '');
+
+    // Set raw digits value before submit
+    cardInput.value = rawNumber;
+
+    const btn = document.getElementById('placeOrderBtn');
+    const btnText = document.getElementById('btnText');
+    const btnSpinner = document.getElementById('btnSpinner');
+
+    btn.disabled = true;
+    btnText.style.display = 'none';
+    btnSpinner.style.display = 'inline-flex';
+
+    // Let the form submit naturally after short delay for UX
+    setTimeout(() => {
+        document.getElementById('checkoutForm').submit();
+    }, 1200);
+
+    return false;
+}
+
+// Initialize card icon on page load
+window.addEventListener('load', function() {
+    const val = document.getElementById('credit_card_number').value;
+    if (val) {
+        const type = detectCardType(val);
+        updateCardIcon(type);
+        // Format existing value
+        document.getElementById('credit_card_number').value = formatCardNumber(val);
+    }
+});
+</script>
+
+{{ end }}

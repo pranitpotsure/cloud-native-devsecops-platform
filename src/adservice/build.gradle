@@ -1,0 +1,141 @@
+/*
+ * AdService build.gradle - Cloud-Agnostic Refactored Version
+ *
+ * CHANGES from original GCP version:
+ * - Removed commented-out GCP Cloud Profiler JVM agent flags
+ *   (-agentpath:/opt/cprof/profiler_java_agent.so)
+ * - No GCP-specific dependencies were in build.gradle to begin with
+ *   (profiler was injected via Dockerfile JVM args in the original repo)
+ * - All dependencies are standard gRPC/Protobuf/Log4j2 — fully cloud-agnostic
+ * - OpenTelemetry dependencies commented out below; uncomment to enable tracing
+ */
+
+plugins {
+    id 'com.google.protobuf' version '0.9.5'
+    id 'com.github.sherter.google-java-format' version '0.9'
+    id 'idea'
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+description = 'Ad Service'
+group = "adservice"
+version = "0.1.0-SNAPSHOT"
+
+def grpcVersion          = "1.77.0"
+def jacksonCoreVersion   = "2.20.1"
+def jacksonDatabindVersion = "2.20.1"
+def protocVersion        = "4.33.1"
+
+// Optional: uncomment to enable OpenTelemetry tracing with OTLP exporter
+// Works with Jaeger, AWS X-Ray (via ADOT collector), Grafana Tempo, etc.
+// def otelVersion = "1.38.0"
+
+tasks.withType(JavaCompile) {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+ext {
+    speed = project.hasProperty('speed') ? project.getProperty('speed') : false
+    offlineCompile = new File("$buildDir/output/lib")
+}
+
+dependencies {
+    if (speed) {
+        implementation fileTree(dir: offlineCompile, include: '*.jar')
+    } else {
+        implementation "com.google.api.grpc:proto-google-common-protos:2.63.1",
+                "javax.annotation:javax.annotation-api:1.3.2",
+                "io.grpc:grpc-protobuf:${grpcVersion}",
+                "io.grpc:grpc-stub:${grpcVersion}",
+                "io.grpc:grpc-netty:${grpcVersion}",
+                "io.grpc:grpc-services:${grpcVersion}",
+                "io.grpc:grpc-census:${grpcVersion}",
+                "org.apache.logging.log4j:log4j-core:2.25.2",
+                "com.google.protobuf:protobuf-java:${protocVersion}"
+
+        runtimeOnly "com.fasterxml.jackson.core:jackson-core:${jacksonCoreVersion}",
+                "com.fasterxml.jackson.core:jackson-databind:${jacksonDatabindVersion}",
+                "io.netty:netty-tcnative-boringssl-static:2.0.74.Final"
+
+        // ---------------------------------------------------------------
+        // OPTIONAL: Uncomment to enable OpenTelemetry tracing
+        // Point OTEL_EXPORTER_OTLP_ENDPOINT to your collector
+        // ---------------------------------------------------------------
+        // implementation "io.opentelemetry:opentelemetry-api:${otelVersion}"
+        // implementation "io.opentelemetry:opentelemetry-sdk:${otelVersion}"
+        // implementation "io.opentelemetry:opentelemetry-exporter-otlp:${otelVersion}"
+        // implementation "io.opentelemetry.instrumentation:opentelemetry-grpc-1.6:${otelVersion}-alpha"
+    }
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${protocVersion}"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:${grpcVersion}"
+        }
+    }
+    generateProtoTasks {
+        all()*.plugins {
+            grpc {}
+        }
+        ofSourceSet('main')
+    }
+}
+
+googleJavaFormat {
+    toolVersion '1.32.0'
+}
+
+// Inform IDEs like IntelliJ IDEA, Eclipse or NetBeans about the generated code.
+sourceSets {
+    main {
+        java {
+            srcDirs 'hipstershop'
+            srcDirs 'build/generated/source/proto/main/java/hipstershop'
+            srcDirs 'build/generated/source/proto/main/grpc/hipstershop'
+        }
+    }
+}
+
+startScripts.enabled = false
+
+// Cache dependencies during Docker image build. First build downloads deps;
+// subsequent builds use the cached layer.
+task downloadRepos(type: Copy) {
+    from configurations.compileClasspath
+    into offlineCompile
+    from configurations.compileClasspath
+    into offlineCompile
+}
+
+task adService(type: CreateStartScripts) {
+    mainClass.set('hipstershop.AdService')
+    applicationName = 'AdService'
+    outputDir = new File(project.buildDir, 'tmp')
+    classpath = startScripts.classpath
+    // GCP Cloud Profiler agent removed.
+    // For AWS: use AWS CodeGuru Profiler agent instead (optional):
+    // defaultJvmOpts = ["-javaagent:/opt/codeguru-profiler/codeguru-profiler-java-agent-standalone.jar"]
+}
+
+task adServiceClient(type: CreateStartScripts) {
+    mainClass.set('hipstershop.AdServiceClient')
+    applicationName = 'AdServiceClient'
+    outputDir = new File(project.buildDir, 'tmp')
+    classpath = startScripts.classpath
+}
+
+applicationDistribution.into('bin') {
+    from(adService)
+    from(adServiceClient)
+    fileMode = 0755
+}

@@ -1,0 +1,248 @@
+# =============================================================================
+# Online Boutique - Cloud-Agnostic Docker Compose
+# All 13 microservices refactored to run locally without GCP
+#
+# Usage:
+#   docker compose up --build          # Build and start everything
+#   docker compose up -d               # Run in background
+#   docker compose logs -f frontend    # Follow a service's logs
+#   docker compose down -v             # Stop and remove volumes
+#
+# Access:
+#   Frontend:  http://localhost:8080
+#   Redis:     localhost:6379
+#   PostgreSQL: localhost:5432
+# =============================================================================
+
+version: "3.8"
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL with pgvector - used by shoppingassistantservice
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: shoppingassistant
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Microservices
+  # ---------------------------------------------------------------------------
+
+  adservice:
+    build: ./adservice
+    container_name: adservice
+    ports:
+      - "9555:9555"
+    environment:
+      PORT: "9555"
+      DISABLE_TRACING: "true"
+      DISABLE_STATS: "true"
+    restart: unless-stopped
+
+  cartservice:
+    build: ./cartservice
+    container_name: cartservice
+    ports:
+      - "7070:7070"
+    environment:
+      PORT: "7070"
+      REDIS_ADDR: "redis:6379"
+      ASPNETCORE_URLS: "http://+:7070"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  checkoutservice:
+    build: ./checkoutservice
+    container_name: checkoutservice
+    ports:
+      - "5050:5050"
+    environment:
+      PORT: "5050"
+      PRODUCT_CATALOG_SERVICE_ADDR: "productcatalogservice:3550"
+      SHIPPING_SERVICE_ADDR: "shippingservice:50051"
+      PAYMENT_SERVICE_ADDR: "paymentservice:50051"
+      EMAIL_SERVICE_ADDR: "emailservice:8080"
+      CURRENCY_SERVICE_ADDR: "currencyservice:7000"
+      CART_SERVICE_ADDR: "cartservice:7070"
+      ENABLE_TRACING: "0"
+    depends_on:
+      - cartservice
+      - productcatalogservice
+      - currencyservice
+      - emailservice
+      - paymentservice
+      - shippingservice
+    restart: unless-stopped
+
+  currencyservice:
+    build: ./currencyservice
+    container_name: currencyservice
+    ports:
+      - "7000:7000"
+    environment:
+      PORT: "7000"
+      ENABLE_TRACING: "0"
+    restart: unless-stopped
+
+  emailservice:
+    build: ./emailservice
+    container_name: emailservice
+    ports:
+      - "8085:8080"
+    environment:
+      PORT: "8080"
+      ENABLE_TRACING: "0"
+      # ─────────────────────────────────────────
+      # EMAIL CONFIGURATION
+      # Set EMAIL_PROVIDER to enable real emails
+      # ─────────────────────────────────────────
+      EMAIL_PROVIDER: "sendgrid"        # Change to: sendgrid | smtp
+      EMAIL_FROM_NAME: "Online Boutique"
+
+      # ── SendGrid (free 100 emails/day) ────────
+      # Sign up free at https://signup.sendgrid.com
+      # EMAIL_PROVIDER: "sendgrid"
+      SENDGRID_API_KEY: "${SENDGRID_API_KEY}"           # Paste your key: SG.xxxxxxxxxx
+      EMAIL_FROM_ADDRESS: "pranitpotsure72@gmail.com"         # Must be verified in SendGrid
+
+      # ── Gmail SMTP ────────────────────────────
+      # EMAIL_PROVIDER: "smtp"
+      # SMTP_HOST: "smtp.gmail.com"
+      # SMTP_PORT: "587"
+      # SMTP_USER: "your@gmail.com"
+      # SMTP_PASSWORD: "your-app-password"
+      # EMAIL_FROM_ADDRESS: "your@gmail.com"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      PRODUCT_CATALOG_SERVICE_ADDR: "productcatalogservice:3550"
+      CURRENCY_SERVICE_ADDR: "currencyservice:7000"
+      CART_SERVICE_ADDR: "cartservice:7070"
+      RECOMMENDATION_SERVICE_ADDR: "recommendationservice:8080"
+      CHECKOUT_SERVICE_ADDR: "checkoutservice:5050"
+      SHIPPING_SERVICE_ADDR: "shippingservice:50051"
+      AD_SERVICE_ADDR: "adservice:9555"
+      SHOPPING_ASSISTANT_SERVICE_ADDR: "shoppingassistantservice:8080"
+      ENABLE_TRACING: "0"
+      ENABLE_ASSISTANT: "true"   
+      # Optional: set for display purposes
+      CLUSTER_NAME: "local-docker"
+      AVAILABILITY_ZONE: "local"
+    depends_on:
+      - cartservice
+      - checkoutservice
+      - currencyservice
+      - productcatalogservice
+      - recommendationservice
+      - shippingservice
+      - adservice
+      - shoppingassistantservice
+    restart: unless-stopped
+
+  loadgenerator:
+    build: ./loadgenerator
+    container_name: loadgenerator
+    environment:
+      FRONTEND_ADDR: "frontend:8080"
+      USERS: "10"
+    command: ["--headless", "--host", "http://frontend:8080", "-u", "10", "-r", "1"]
+    depends_on:
+      - frontend
+    restart: unless-stopped
+    profiles:
+      - loadtest  # Only starts with: docker compose --profile loadtest up
+
+  paymentservice:
+    build: ./paymentservice
+    container_name: paymentservice
+    ports:
+      - "50054:50051"
+    environment:
+      PORT: "50051"
+      ENABLE_TRACING: "0"
+    restart: unless-stopped
+
+  productcatalogservice:
+    build: ./productcatalogservice
+    container_name: productcatalogservice
+    ports:
+      - "3550:3550"
+    environment:
+      PORT: "3550"
+      ENABLE_TRACING: "0"
+    restart: unless-stopped
+
+  recommendationservice:
+    build: ./recommendationservice
+    container_name: recommendationservice
+    ports:
+      - "8086:8080"
+    environment:
+      PORT: "8080"
+      PRODUCT_CATALOG_SERVICE_ADDR: "productcatalogservice:3550"
+      ENABLE_TRACING: "0"
+    depends_on:
+      - productcatalogservice
+    restart: unless-stopped
+
+  shippingservice:
+    build: ./shippingservice
+    container_name: shippingservice
+    ports:
+      - "50051:50051"
+    environment:
+      PORT: "50051"
+      DISABLE_TRACING: "1"
+      DISABLE_STATS: "1"
+      DISABLE_PROFILER: "1"
+    restart: unless-stopped
+
+  shoppingassistantservice:
+    build: ./shoppingassistantservice
+    container_name: shoppingassistantservice
+    ports:
+      - "8087:8080"
+    environment:
+      PORT: "8080"
+      DUMMY_MODE: "false"
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+    restart: unless-stopped
+
+networks:
+  default:
+    name: boutique-network
+    driver: bridge

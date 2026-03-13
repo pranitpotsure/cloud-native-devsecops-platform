@@ -1,0 +1,11 @@
+# ShoppingAssistantService - Gemini Backend
+# No OpenAI, no pgvector, no database needed
+# Uses Gemini API directly via urllib (built into Python)
+
+flask==3.1.0
+werkzeug==3.1.3
+jinja2==3.1.6
+markupsafe==3.0.2
+click==8.1.8
+blinker==1.9.0
+itsdangerous==2.2.0

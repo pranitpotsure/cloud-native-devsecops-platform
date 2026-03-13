@@ -1,0 +1,739 @@
+# =============================================================================
+# All 12 Microservices - Deployments & Services
+# DevSecOps: Non-root, resource limits, health probes on every service
+# =============================================================================
+
+# ── AdService ─────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adservice
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: adservice
+  template:
+    metadata:
+      labels:
+        app: adservice
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: adservice
+          image: your-dockerhub/adservice:latest
+          ports:
+            - containerPort: 9555
+          env:
+            - name: PORT
+              value: "9555"
+            - name: DISABLE_TRACING
+              value: "true"
+            - name: DISABLE_STATS
+              value: "true"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            grpc:
+              port: 9555
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          livenessProbe:
+            grpc:
+              port: 9555
+            initialDelaySeconds: 20
+            periodSeconds: 15
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: adservice
+  namespace: boutique
+spec:
+  selector:
+    app: adservice
+  ports:
+    - port: 9555
+      targetPort: 9555
+
+---
+# ── CartService ───────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cartservice
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cartservice
+  template:
+    metadata:
+      labels:
+        app: cartservice
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: cartservice
+          image: your-dockerhub/cartservice:latest
+          ports:
+            - containerPort: 7070
+          env:
+            - name: PORT
+              value: "7070"
+            - name: REDIS_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: REDIS_ADDR
+            - name: ASPNETCORE_URLS
+              value: "http://+:7070"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            grpc:
+              port: 7070
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            grpc:
+              port: 7070
+            initialDelaySeconds: 15
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cartservice
+  namespace: boutique
+spec:
+  selector:
+    app: cartservice
+  ports:
+    - port: 7070
+      targetPort: 7070
+
+---
+# ── CheckoutService ───────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkoutservice
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: checkoutservice
+  template:
+    metadata:
+      labels:
+        app: checkoutservice
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: checkoutservice
+          image: your-dockerhub/checkoutservice:latest
+          ports:
+            - containerPort: 5050
+          env:
+            - name: PORT
+              value: "5050"
+            - name: PRODUCT_CATALOG_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: PRODUCT_CATALOG_SERVICE_ADDR
+            - name: SHIPPING_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: SHIPPING_SERVICE_ADDR
+            - name: PAYMENT_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: PAYMENT_SERVICE_ADDR
+            - name: EMAIL_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: EMAIL_SERVICE_ADDR
+            - name: CURRENCY_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: CURRENCY_SERVICE_ADDR
+            - name: CART_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: CART_SERVICE_ADDR
+            - name: ENABLE_TRACING
+              value: "0"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          readinessProbe:
+            grpc:
+              port: 5050
+            initialDelaySeconds: 15
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkoutservice
+  namespace: boutique
+spec:
+  selector:
+    app: checkoutservice
+  ports:
+    - port: 5050
+      targetPort: 5050
+
+---
+# ── CurrencyService ───────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: currencyservice
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: currencyservice
+  template:
+    metadata:
+      labels:
+        app: currencyservice
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: currencyservice
+          image: your-dockerhub/currencyservice:latest
+          ports:
+            - containerPort: 7000
+          env:
+            - name: PORT
+              value: "7000"
+            - name: ENABLE_TRACING
+              value: "0"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          readinessProbe:
+            grpc:
+              port: 7000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: currencyservice
+  namespace: boutique
+spec:
+  selector:
+    app: currencyservice
+  ports:
+    - port: 7000
+      targetPort: 7000
+
+---
+# ── EmailService ──────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: emailservice
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: emailservice
+  template:
+    metadata:
+      labels:
+        app: emailservice
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: emailservice
+          image: your-dockerhub/emailservice:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: ENABLE_TRACING
+              value: "0"
+            - name: EMAIL_PROVIDER
+              value: "sendgrid"
+            - name: SENDGRID_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: email-secrets
+                  key: SENDGRID_API_KEY
+            - name: EMAIL_FROM_ADDRESS
+              valueFrom:
+                secretKeyRef:
+                  name: email-secrets
+                  key: EMAIL_FROM_ADDRESS
+            - name: EMAIL_FROM_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: email-secrets
+                  key: EMAIL_FROM_NAME
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: emailservice
+  namespace: boutique
+spec:
+  selector:
+    app: emailservice
+  ports:
+    - port: 8080
+      targetPort: 8080
+
+---
+# ── Frontend ──────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: frontend
+          image: your-dockerhub/frontend:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: PRODUCT_CATALOG_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: PRODUCT_CATALOG_SERVICE_ADDR
+            - name: CURRENCY_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: CURRENCY_SERVICE_ADDR
+            - name: CART_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: CART_SERVICE_ADDR
+            - name: RECOMMENDATION_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: RECOMMENDATION_SERVICE_ADDR
+            - name: CHECKOUT_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: CHECKOUT_SERVICE_ADDR
+            - name: SHIPPING_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: SHIPPING_SERVICE_ADDR
+            - name: AD_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: AD_SERVICE_ADDR
+            - name: SHOPPING_ASSISTANT_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: SHOPPING_ASSISTANT_SERVICE_ADDR
+            - name: ENABLE_TRACING
+              value: "0"
+            - name: ENABLE_ASSISTANT
+              value: "true"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /_healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /_healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: boutique
+spec:
+  selector:
+    app: frontend
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8080
+
+---
+# ── PaymentService ────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paymentservice
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: paymentservice
+  template:
+    metadata:
+      labels:
+        app: paymentservice
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: paymentservice
+          image: your-dockerhub/paymentservice:latest
+          ports:
+            - containerPort: 50051
+          env:
+            - name: PORT
+              value: "50051"
+            - name: ENABLE_TRACING
+              value: "0"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paymentservice
+  namespace: boutique
+spec:
+  selector:
+    app: paymentservice
+  ports:
+    - port: 50051
+      targetPort: 50051
+
+---
+# ── ProductCatalogService ─────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: productcatalogservice
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: productcatalogservice
+  template:
+    metadata:
+      labels:
+        app: productcatalogservice
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: productcatalogservice
+          image: your-dockerhub/productcatalogservice:latest
+          ports:
+            - containerPort: 3550
+          env:
+            - name: PORT
+              value: "3550"
+            - name: ENABLE_TRACING
+              value: "0"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          readinessProbe:
+            grpc:
+              port: 3550
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: productcatalogservice
+  namespace: boutique
+spec:
+  selector:
+    app: productcatalogservice
+  ports:
+    - port: 3550
+      targetPort: 3550
+
+---
+# ── RecommendationService ─────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommendationservice
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: recommendationservice
+  template:
+    metadata:
+      labels:
+        app: recommendationservice
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: recommendationservice
+          image: your-dockerhub/recommendationservice:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: PRODUCT_CATALOG_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: boutique-config
+                  key: PRODUCT_CATALOG_SERVICE_ADDR
+            - name: ENABLE_TRACING
+              value: "0"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "250m"
+              memory: "512Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: recommendationservice
+  namespace: boutique
+spec:
+  selector:
+    app: recommendationservice
+  ports:
+    - port: 8080
+      targetPort: 8080
+
+---
+# ── ShippingService ───────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shippingservice
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shippingservice
+  template:
+    metadata:
+      labels:
+        app: shippingservice
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: shippingservice
+          image: your-dockerhub/shippingservice:latest
+          ports:
+            - containerPort: 50051
+          env:
+            - name: PORT
+              value: "50051"
+            - name: DISABLE_TRACING
+              value: "1"
+            - name: DISABLE_STATS
+              value: "1"
+            - name: DISABLE_PROFILER
+              value: "1"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+          readinessProbe:
+            grpc:
+              port: 50051
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shippingservice
+  namespace: boutique
+spec:
+  selector:
+    app: shippingservice
+  ports:
+    - port: 50051
+      targetPort: 50051
+
+---
+# ── ShoppingAssistantService ──────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shoppingassistantservice
+  namespace: boutique
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shoppingassistantservice
+  template:
+    metadata:
+      labels:
+        app: shoppingassistantservice
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: shoppingassistantservice
+          image: your-dockerhub/shoppingassistantservice:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: DUMMY_MODE
+              value: "false"
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gemini-secrets
+                  key: GEMINI_API_KEY
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /_healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /_healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shoppingassistantservice
+  namespace: boutique
+spec:
+  selector:
+    app: shoppingassistantservice
+  ports:
+    - port: 8080
+      targetPort: 8080
