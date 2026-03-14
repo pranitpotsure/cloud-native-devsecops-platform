@@ -37,11 +37,6 @@ pipeline {
             steps {
                 echo '🔍 Running Trivy filesystem scan (DevSecOps)...'
                 sh '''
-                    # Install Trivy if not present
-                    if ! command -v trivy &> /dev/null; then
-                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-                    fi
-
                     # Scan source code for secrets and vulnerabilities
                     trivy fs . \
                         --severity HIGH,CRITICAL \
