@@ -4,3 +4,33 @@
 src/.env
 
 k8s/secrets/secrets.yaml
+
+# ── Terraform ──────────────────────────────────────────────
+# State files (contain sensitive data - never commit!)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Terraform lock and cache
+.terraform/
+.terraform.lock.hcl
+.terraform.tfstate.lock.info
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Sensitive variable files
+*.tfvars
+*.tfvars.json
+terraform.tfvars
+
+# Plan files (can contain secrets)
+*.tfplan
+*.plan
