@@ -34,3 +34,7 @@ terraform.tfvars
 # Plan files (can contain secrets)
 *.tfplan
 *.plan
+
+# Terraform secrets - NEVER commit these
+terraform/secrets.tf
+terraform/*.tfvars

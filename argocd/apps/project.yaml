@@ -1,0 +1,60 @@
+# =============================================================================
+# project.yaml - ArgoCD Projects
+# DevSecOps: RBAC - restrict who can deploy to production
+# =============================================================================
+
+# ── Default project (dev) ─────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: argocd
+spec:
+  description: "Development project - auto sync allowed"
+
+  # Allow deployments from this repo only
+  sourceRepos:
+    - https://github.com/pranitpotsure/cloud-native-devsecops-platform.git
+
+  # Allow deploying to boutique namespace only
+  destinations:
+    - namespace: boutique
+      server: https://kubernetes.default.svc
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+
+  # Allow all K8s resources
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+---
+# ── Production project (restricted) ──────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: boutique-prod-project
+  namespace: argocd
+spec:
+  description: "Production project - manual sync only, restricted access"
+
+  sourceRepos:
+    - https://github.com/pranitpotsure/cloud-native-devsecops-platform.git
+
+  destinations:
+    - namespace: boutique-prod
+      server: https://kubernetes.default.svc
+
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  # DevSecOps: Only admin role can sync to prod
+  roles:
+    - name: prod-deployer
+      description: "Can sync production deployments"
+      policies:
+        - p, proj:boutique-prod-project:prod-deployer, applications, sync, boutique-prod-project/*, allow
+        - p, proj:boutique-prod-project:prod-deployer, applications, get, boutique-prod-project/*, allow
+      groups:
+        - boutique-admins  # Only users in this group can deploy to prod

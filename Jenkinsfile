@@ -1,24 +1,26 @@
 // =============================================================================
-// Jenkinsfile - DevSecOps CI/CD Pipeline
-// Online Boutique - Cloud Native Microservices
+// Jenkinsfile.aws - Production Pipeline for AWS
+// Jenkins on EC2 → builds → pushes to ECR → updates Git → ArgoCD deploys
 //
-// Pipeline Stages:
-//   1. Checkout        - Pull code from GitHub
-//   2. Security Scan   - Trivy SAST scan (DevSecOps)
-//   3. Build Images    - Docker build all 12 services
-//   4. Image Scan      - Trivy CVE scan on each image (DevSecOps)
-//   5. Push Images     - Push to DockerHub
-//   6. Deploy          - Update K8s manifests with new image tags
+// Flow:
+//   GitHub Push → Jenkins → Trivy Scan → Build → Push ECR → Update Git Tag
+//                                                                    ↓
+//                                                          ArgoCD detects change
+//                                                                    ↓
+//                                                          Auto deploys to EKS
 // =============================================================================
 
 pipeline {
     agent any
 
     environment {
-        DOCKERHUB_USERNAME    = "pranitpotsure"   // ← CHANGE THIS
-        GITHUB_REPO           = "https://github.com/pranitpotsure/cloud-native-devsecops-platform.git"  // ← CHANGE THIS
-        IMAGE_TAG             = "${BUILD_NUMBER}"
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
+        AWS_REGION        = "ap-south-1"
+        AWS_ACCOUNT_ID    = sh(script: "aws sts get-caller-identity --query Account --output text", returnStdout: true).trim()
+        ECR_REGISTRY      = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        PROJECT_NAME      = "boutique"
+        IMAGE_TAG         = "${BUILD_NUMBER}"
+        GITHUB_REPO       = "https://github.com/pranitpotsure/cloud-native-devsecops-platform.git"
+        GITHUB_CREDENTIALS = credentials('github-credentials')
     }
 
     stages {
@@ -26,26 +28,23 @@ pipeline {
         // ── Stage 1: Checkout ──────────────────────────────────────────────
         stage('Checkout') {
             steps {
-                echo '📥 Pulling latest code from GitHub...'
+                echo '📥 Pulling latest code...'
                 checkout scm
-                echo "✅ Code checked out. Build #${BUILD_NUMBER}"
+                echo "✅ Build #${BUILD_NUMBER} started"
             }
         }
 
-        // ── Stage 2: Security Scan (SAST) ──────────────────────────────────
+        // ── Stage 2: Security Scan ─────────────────────────────────────────
         stage('Security Scan - SAST') {
             steps {
-                echo '🔍 Running Trivy filesystem scan (DevSecOps)...'
+                echo '🔍 Running Trivy filesystem scan...'
                 sh '''
-                    # Scan source code for secrets and vulnerabilities
                     trivy fs . \
                         --severity HIGH,CRITICAL \
                         --exit-code 0 \
                         --format table \
                         --output trivy-fs-report.txt \
                         --scanners secret,vuln
-
-                    echo "📄 Filesystem scan complete. Check trivy-fs-report.txt"
                     cat trivy-fs-report.txt
                 '''
             }
@@ -56,145 +55,103 @@ pipeline {
             }
         }
 
-        // ── Stage 3: Build Docker Images ───────────────────────────────────
-        stage('Build Docker Images') {
+        // ── Stage 3: Login to ECR ──────────────────────────────────────────
+        stage('ECR Login') {
             steps {
-                echo '🐳 Building all 12 microservice images...'
+                echo '🔐 Logging into AWS ECR...'
                 sh '''
-                    cd src
-
-                    # Build each service
-                    SERVICES="adservice cartservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice shoppingassistantservice"
-
-                    for SERVICE in $SERVICES; do
-                        echo "🔨 Building $SERVICE..."
-                        docker build \
-                            -t ${DOCKERHUB_USERNAME}/${SERVICE}:${IMAGE_TAG} \
-                            -t ${DOCKERHUB_USERNAME}/${SERVICE}:latest \
-                            ./${SERVICE}/
-                        echo "✅ $SERVICE built successfully"
-                    done
+                    aws ecr get-login-password --region ${AWS_REGION} | \
+                    docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                    echo "✅ ECR login successful"
                 '''
             }
         }
 
-        // ── Stage 4: Image Security Scan ───────────────────────────────────
-        stage('Security Scan - Images') {
+        // ── Stage 4: Build & Push Images ───────────────────────────────────
+        stage('Build & Push to ECR') {
             steps {
-                echo '🔒 Scanning Docker images for CVEs (DevSecOps)...'
+                echo '🐳 Building and pushing images to ECR...'
                 sh '''
+                    cd src
                     SERVICES="adservice cartservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice shoppingassistantservice"
 
-                    # Create report file
-                    echo "=== IMAGE SCAN REPORT - Build #${IMAGE_TAG} ===" > trivy-image-report.txt
-                    echo "Date: $(date)" >> trivy-image-report.txt
-                    echo "" >> trivy-image-report.txt
-
                     for SERVICE in $SERVICES; do
-                        echo "🔍 Scanning ${DOCKERHUB_USERNAME}/${SERVICE}:${IMAGE_TAG}..."
-                        echo "--- $SERVICE ---" >> trivy-image-report.txt
+                        ECR_IMAGE="${ECR_REGISTRY}/${PROJECT_NAME}/${SERVICE}"
 
+                        echo "🔨 Building ${SERVICE}..."
+                        docker build \
+                            -t ${ECR_IMAGE}:${IMAGE_TAG} \
+                            -t ${ECR_IMAGE}:latest \
+                            ./${SERVICE}/
+
+                        echo "🔍 Scanning ${SERVICE} image..."
                         trivy image \
                             --severity HIGH,CRITICAL \
                             --exit-code 0 \
                             --format table \
-                            ${DOCKERHUB_USERNAME}/${SERVICE}:${IMAGE_TAG} >> trivy-image-report.txt 2>&1
+                            ${ECR_IMAGE}:${IMAGE_TAG}
 
-                        echo "" >> trivy-image-report.txt
+                        echo "📤 Pushing ${SERVICE} to ECR..."
+                        docker push ${ECR_IMAGE}:${IMAGE_TAG}
+                        docker push ${ECR_IMAGE}:latest
+
+                        echo "✅ ${SERVICE} done"
                     done
-
-                    echo "📄 Image scan complete!"
-                    cat trivy-image-report.txt
-                '''
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'trivy-image-report.txt', allowEmptyArchive: true
-                }
-            }
-        }
-
-        // ── Stage 5: Push to DockerHub ─────────────────────────────────────
-        stage('Push to DockerHub') {
-            steps {
-                echo '📤 Pushing images to DockerHub...'
-                sh '''
-                    # Login to DockerHub
-                    echo "${DOCKERHUB_CREDENTIALS_PSW}" | docker login -u "${DOCKERHUB_CREDENTIALS_USR}" --password-stdin
-
-                    SERVICES="adservice cartservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice shoppingassistantservice"
-
-                    for SERVICE in $SERVICES; do
-                        echo "📤 Pushing $SERVICE:${IMAGE_TAG}..."
-                        docker push ${DOCKERHUB_USERNAME}/${SERVICE}:${IMAGE_TAG}
-                        docker push ${DOCKERHUB_USERNAME}/${SERVICE}:latest
-                        echo "✅ $SERVICE pushed"
-                    done
-
-                    docker logout
-                    echo "✅ All images pushed to DockerHub"
                 '''
             }
         }
 
-        // ── Stage 6: Update K8s Manifests ─────────────────────────────────
-        stage('Update K8s Manifests') {
+        // ── Stage 5: Update K8s Manifests in Git ──────────────────────────
+        // This is what triggers ArgoCD auto-sync!
+        stage('Update Git Manifests') {
             steps {
-                echo '📝 Updating image tags in K8s manifests...'
+                echo '📝 Updating image tags in Git - ArgoCD will detect this...'
                 sh '''
                     SERVICES="adservice cartservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice shoppingassistantservice"
 
+                    git config user.email "jenkins@boutique.com"
+                    git config user.name "Jenkins CI"
+
                     for SERVICE in $SERVICES; do
+                        ECR_IMAGE="${ECR_REGISTRY}/${PROJECT_NAME}/${SERVICE}"
+
                         # Update image tag in services.yaml
-                        sed -i "s|${DOCKERHUB_USERNAME}/${SERVICE}:.*|${DOCKERHUB_USERNAME}/${SERVICE}:${IMAGE_TAG}|g" \
+                        sed -i "s|${ECR_IMAGE}:.*|${ECR_IMAGE}:${IMAGE_TAG}|g" \
                             k8s/services/services.yaml
-                        echo "✅ Updated $SERVICE to tag ${IMAGE_TAG}"
+
+                        echo "✅ Updated ${SERVICE} → tag ${IMAGE_TAG}"
                     done
-                '''
-            }
-        }
 
-        // ── Stage 7: Deploy (local Docker Compose for now) ────────────────
-        stage('Deploy - Local') {
-            steps {
-                echo '🚀 Deploying updated services...'
-                sh '''
-                    cd src
+                    # Commit and push updated manifests
+                    git add k8s/services/services.yaml
+                    git commit -m "CI: Update image tags to build #${IMAGE_TAG} [skip ci]"
+                    git push https://${GITHUB_CREDENTIALS_USR}:${GITHUB_CREDENTIALS_PSW}@github.com/pranitpotsure/cloud-native-devsecops-platform.git HEAD:main
 
-                    # Pull latest images and restart changed services
-                    docker compose pull
-                    docker compose up -d --no-deps
-
-                    echo "✅ Deployment complete!"
-                    docker compose ps
+                    echo "✅ Git updated - ArgoCD will now auto-deploy!"
                 '''
             }
         }
     }
 
-    // ── Post Pipeline Actions ──────────────────────────────────────────────
     post {
         success {
             echo """
             ✅ ================================================
             ✅  PIPELINE SUCCESS - Build #${BUILD_NUMBER}
-            ✅  All 11 services built, scanned & pushed
-            ✅  Images tagged: ${DOCKERHUB_USERNAME}/*:${BUILD_NUMBER}
+            ✅  Images pushed to ECR with tag: ${BUILD_NUMBER}
+            ✅  Git manifests updated
+            ✅  ArgoCD is now syncing to EKS automatically
             ✅ ================================================
             """
         }
         failure {
             echo """
-            ❌ ================================================
             ❌  PIPELINE FAILED - Build #${BUILD_NUMBER}
             ❌  Check logs above for details
-            ❌ ================================================
             """
         }
         always {
-            // Clean up dangling images to save disk space
             sh 'docker image prune -f || true'
-            echo '🧹 Cleanup complete'
         }
     }
 }

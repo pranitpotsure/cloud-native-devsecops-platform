@@ -1,0 +1,46 @@
+# =============================================================================
+# boutique-prod.yaml - ArgoCD Application for Prod Environment
+# MANUAL SYNC - requires approval before deploying
+# =============================================================================
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: boutique-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    environment: prod
+    team: boutique
+spec:
+  project: boutique-prod-project  # Uses restricted project (see project.yaml)
+
+  # ── Source ─────────────────────────────────────────────────────────────────
+  source:
+    repoURL: https://github.com/pranitpotsure/cloud-native-devsecops-platform.git
+    targetRevision: HEAD
+    path: k8s
+
+  # ── Destination ────────────────────────────────────────────────────────────
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: boutique-prod
+
+  # ── NO automated sync for prod ─────────────────────────────────────────────
+  # syncPolicy is intentionally NOT set here
+  # Deploy manually via:
+  #   argocd app sync boutique-prod
+  # Or via ArgoCD UI → click Sync button
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 2
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

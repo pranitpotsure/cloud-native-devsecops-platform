@@ -1,0 +1,51 @@
+# =============================================================================
+# boutique-dev.yaml - ArgoCD Application for Dev Environment
+# AUTO SYNC enabled - deploys automatically on every Git push
+# =============================================================================
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: boutique-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    environment: dev
+    team: boutique
+spec:
+  project: default
+
+  # ── Source: where to get K8s manifests from ────────────────────────────────
+  source:
+    repoURL: https://github.com/pranitpotsure/cloud-native-devsecops-platform.git
+    targetRevision: HEAD   # Always use latest commit on main branch
+    path: k8s              # Folder containing all K8s manifests
+
+  # ── Destination: where to deploy ───────────────────────────────────────────
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: boutique   # Deploy to boutique namespace
+
+  # ── Sync Policy: AUTO SYNC for dev ─────────────────────────────────────────
+  syncPolicy:
+    automated:
+      prune: true      # If you delete a file from k8s/ → ArgoCD deletes resource
+      selfHeal: true   # If someone runs kubectl manually → ArgoCD reverts it
+    syncOptions:
+      - CreateNamespace=true       # Create boutique namespace if not exists
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true             # Delete old resources last (safer)
+    retry:
+      limit: 3         # Retry failed syncs 3 times
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+
+  # ── Health checks ──────────────────────────────────────────────────────────
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas  # Ignore replica count (HPA manages this)

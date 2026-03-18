@@ -1,0 +1,35 @@
+# =============================================================================
+# app-of-apps.yaml - Master ArgoCD Application
+# This single file tells ArgoCD to manage ALL other apps
+# Pattern used by: Spotify, Airbnb, and most large K8s teams
+#
+# Apply once: kubectl apply -f argocd/apps/app-of-apps.yaml
+# After that - everything is managed by ArgoCD automatically
+# =============================================================================
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: app-of-apps
+  namespace: argocd
+  # Finalizer ensures ArgoCD cleans up child apps when this is deleted
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/pranitpotsure/cloud-native-devsecops-platform.git
+    targetRevision: HEAD
+    path: argocd/apps  # ArgoCD watches this folder for app definitions
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true     # Delete resources removed from Git
+      selfHeal: true  # Auto-fix if someone manually changes K8s
+    syncOptions:
+      - CreateNamespace=true
