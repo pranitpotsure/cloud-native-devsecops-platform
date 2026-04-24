@@ -1,0 +1,79 @@
+# =============================================================================
+# loki-alerts.yaml - Log-based alerting rules
+# Triggers alerts based on log patterns (errors, failures)
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-alert-rules
+  namespace: monitoring
+data:
+  boutique-log-alerts.yaml: |
+    groups:
+      - name: boutique-log-alerts
+        interval: 1m
+        rules:
+
+          # ── Payment failures alert ────────────────────────────────────────
+          - alert: PaymentServiceErrors
+            expr: |
+              sum(rate({namespace="boutique", service="paymentservice"}
+              |= "error" [5m])) > 0
+            for: 2m
+            labels:
+              severity: critical
+              service: paymentservice
+            annotations:
+              summary: "Payment service errors detected"
+              description: "Payment service has been logging errors for 2 minutes"
+
+          # ── Checkout failures alert ───────────────────────────────────────
+          - alert: CheckoutServiceErrors
+            expr: |
+              sum(rate({namespace="boutique", service="checkoutservice"}
+              |= "error" [5m])) > 0
+            for: 2m
+            labels:
+              severity: critical
+              service: checkoutservice
+            annotations:
+              summary: "Checkout service errors detected"
+              description: "Checkout service has been logging errors for 2 minutes"
+
+          # ── High error rate across all services ───────────────────────────
+          - alert: HighErrorRate
+            expr: |
+              sum(rate({namespace="boutique"} |= "error" [5m])) > 10
+            for: 3m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High error rate across boutique services"
+              description: "More than 10 errors per second across all services"
+
+          # ── Email sending failures ────────────────────────────────────────
+          - alert: EmailServiceFailures
+            expr: |
+              sum(rate({namespace="boutique", service="emailservice"}
+              |= "failed" [5m])) > 0
+            for: 5m
+            labels:
+              severity: warning
+              service: emailservice
+            annotations:
+              summary: "Email service failing to send emails"
+              description: "Email service has been failing for 5 minutes"
+
+          # ── Gemini API rate limiting ──────────────────────────────────────
+          - alert: GeminiRateLimited
+            expr: |
+              sum(rate({namespace="boutique", service="shoppingassistantservice"}
+              |= "rate_limited" [5m])) > 0
+            for: 5m
+            labels:
+              severity: warning
+              service: shoppingassistantservice
+            annotations:
+              summary: "Gemini API being rate limited"
+              description: "Shopping assistant is hitting Gemini API rate limits"

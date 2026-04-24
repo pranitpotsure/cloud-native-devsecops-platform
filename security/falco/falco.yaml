@@ -1,0 +1,223 @@
+# =============================================================================
+# falco.yaml - Runtime Security
+# Watches inside running containers for suspicious behavior
+# Alerts when: shell spawned, sensitive files read, privilege escalation
+# =============================================================================
+
+# ── Falco Namespace ───────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: falco
+  labels:
+    name: falco
+
+---
+# ── Falco ConfigMap - rules ───────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-rules
+  namespace: falco
+data:
+  boutique-rules.yaml: |
+    # ==========================================================================
+    # Custom Falco rules for Online Boutique
+    # ==========================================================================
+
+    # ── Rule 1: Shell spawned inside any boutique container ───────────────────
+    - rule: Shell Spawned in Boutique Container
+      desc: Detects if someone spawns a shell inside a boutique pod (possible attack)
+      condition: >
+        spawned_process
+        and container
+        and k8s.ns.name = "boutique"
+        and proc.name in (bash, sh, zsh, dash)
+      output: >
+        🚨 SECURITY ALERT: Shell spawned in boutique container!
+        (user=%user.name pod=%k8s.pod.name container=%container.name
+        command=%proc.cmdline image=%container.image.repository)
+      priority: CRITICAL
+      tags: [boutique, shell, attack]
+
+    # ── Rule 2: Sensitive file read ───────────────────────────────────────────
+    - rule: Sensitive File Read in Boutique
+      desc: Detects reading of sensitive system files
+      condition: >
+        open_read
+        and container
+        and k8s.ns.name = "boutique"
+        and fd.name in (/etc/passwd, /etc/shadow, /etc/sudoers, /root/.ssh/id_rsa)
+      output: >
+        🚨 SECURITY ALERT: Sensitive file accessed in boutique!
+        (file=%fd.name pod=%k8s.pod.name user=%user.name)
+      priority: CRITICAL
+      tags: [boutique, sensitive-file]
+
+    # ── Rule 3: Unexpected outbound connection ────────────────────────────────
+    - rule: Unexpected Outbound Connection
+      desc: Detects unexpected network connections from boutique pods
+      condition: >
+        outbound
+        and container
+        and k8s.ns.name = "boutique"
+        and not fd.sport in (80, 443, 8080, 50051, 7000, 7070, 3550, 9555, 5050)
+      output: >
+        ⚠️ WARNING: Unexpected outbound connection from boutique pod
+        (pod=%k8s.pod.name destination=%fd.rip:%fd.rport)
+      priority: WARNING
+      tags: [boutique, network]
+
+    # ── Rule 4: Privilege escalation ──────────────────────────────────────────
+    - rule: Privilege Escalation in Boutique
+      desc: Detects privilege escalation attempts
+      condition: >
+        spawned_process
+        and container
+        and k8s.ns.name = "boutique"
+        and proc.name in (sudo, su, newgrp)
+      output: >
+        🚨 SECURITY ALERT: Privilege escalation attempt!
+        (user=%user.name pod=%k8s.pod.name command=%proc.cmdline)
+      priority: CRITICAL
+      tags: [boutique, privilege-escalation]
+
+    # ── Rule 5: Package install inside container ──────────────────────────────
+    - rule: Package Install in Boutique Container
+      desc: Detects if someone installs packages inside a running container
+      condition: >
+        spawned_process
+        and container
+        and k8s.ns.name = "boutique"
+        and proc.name in (apt, apt-get, yum, pip, npm)
+      output: >
+        ⚠️ WARNING: Package installation attempted in boutique container
+        (pod=%k8s.pod.name command=%proc.cmdline)
+      priority: WARNING
+      tags: [boutique, package-install]
+
+---
+# ── Falco DaemonSet ───────────────────────────────────────────────────────────
+# Runs on EVERY node to monitor ALL containers
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: falco
+  namespace: falco
+  labels:
+    app: falco
+spec:
+  selector:
+    matchLabels:
+      app: falco
+  template:
+    metadata:
+      labels:
+        app: falco
+    spec:
+      serviceAccountName: falco
+      hostNetwork: true
+      hostPID: true     # Needs host PID to monitor processes
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/master
+      containers:
+        - name: falco
+          image: falcosecurity/falco:latest
+          securityContext:
+            privileged: true   # Needs privilege to monitor kernel
+          args:
+            - /usr/bin/falco
+            - --cri=/run/containerd/containerd.sock
+            - -pk
+          env:
+            - name: FALCO_BPF_PROBE
+              value: ""
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - mountPath: /host/var/run/docker.sock
+              name: docker-socket
+            - mountPath: /host/run/containerd/containerd.sock
+              name: containerd-socket
+            - mountPath: /host/dev
+              name: dev-fs
+              readOnly: true
+            - mountPath: /host/proc
+              name: proc-fs
+              readOnly: true
+            - mountPath: /host/boot
+              name: boot-fs
+              readOnly: true
+            - mountPath: /host/lib/modules
+              name: lib-modules
+            - mountPath: /host/usr
+              name: usr-fs
+              readOnly: true
+            - mountPath: /etc/falco/rules.d
+              name: rules
+      volumes:
+        - name: docker-socket
+          hostPath:
+            path: /var/run/docker.sock
+        - name: containerd-socket
+          hostPath:
+            path: /run/containerd/containerd.sock
+        - name: dev-fs
+          hostPath:
+            path: /dev
+        - name: proc-fs
+          hostPath:
+            path: /proc
+        - name: boot-fs
+          hostPath:
+            path: /boot
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+        - name: usr-fs
+          hostPath:
+            path: /usr
+        - name: rules
+          configMap:
+            name: falco-rules
+
+---
+# ── Falco ServiceAccount ──────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: falco
+  namespace: falco
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: falco
+rules:
+  - apiGroups: [""]
+    resources: [nodes, namespaces, pods, replicationcontrollers, services]
+    verbs: [get, list, watch]
+  - apiGroups: ["apps"]
+    resources: [daemonsets, deployments, replicasets, statefulsets]
+    verbs: [get, list, watch]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: falco
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: falco
+subjects:
+  - kind: ServiceAccount
+    name: falco
+    namespace: falco

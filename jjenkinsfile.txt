@@ -1,0 +1,259 @@
+// =============================================================================
+// Jenkinsfile - Production Pipeline (AWS)
+// DevSecOps Tools:
+//   Semgrep  → SAST code scanning
+//   tfsec    → Terraform security scanning
+//   Trivy    → Container vulnerability scanning
+//   Cosign   → Image signing
+//   ArgoCD   → GitOps deployment
+// =============================================================================
+
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION         = "ap-south-1"
+        AWS_ACCOUNT_ID     = sh(script: "aws sts get-caller-identity --query Account --output text", returnStdout: true).trim()
+        ECR_REGISTRY       = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        PROJECT_NAME       = "boutique"
+        IMAGE_TAG          = "${BUILD_NUMBER}"
+        GITHUB_REPO        = "https://github.com/pranitpotsure/cloud-native-devsecops-platform.git"
+        GITHUB_CREDENTIALS = credentials('github-credentials')
+        COSIGN_PASSWORD    = credentials('cosign-password')
+    }
+
+    stages {
+
+        // ── Stage 1: Checkout ──────────────────────────────────────────────
+        stage('Checkout') {
+            steps {
+                echo '📥 Pulling latest code...'
+                checkout scm
+                echo "✅ Build #${BUILD_NUMBER} started"
+            }
+        }
+
+        // ── Stage 2: Semgrep SAST Scan ─────────────────────────────────────
+        // Scans SOURCE CODE for security bugs before building
+        stage('Semgrep - SAST Scan') {
+            steps {
+                echo '🔍 Running Semgrep static code analysis...'
+                sh '''
+                    # Install Semgrep if not present
+                    if ! command -v semgrep &> /dev/null; then
+                        pip3 install semgrep --quiet
+                    fi
+
+                    # Run Semgrep with security ruleset
+                    semgrep scan \
+                        --config=auto \
+                        --severity=ERROR \
+                        --severity=WARNING \
+                        --output=semgrep-report.json \
+                        --json \
+                        --quiet \
+                        src/ || true
+
+                    # Convert to readable format
+                    semgrep scan \
+                        --config=auto \
+                        --severity=ERROR \
+                        --output=semgrep-report.txt \
+                        src/ || true
+
+                    echo "📄 Semgrep scan complete"
+                    cat semgrep-report.txt || echo "No issues found"
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'semgrep-report.*', allowEmptyArchive: true
+                }
+            }
+        }
+
+        // ── Stage 3: Trivy Filesystem Scan ────────────────────────────────
+        stage('Trivy - Filesystem Scan') {
+            steps {
+                echo '🔍 Running Trivy filesystem + secrets scan...'
+                sh '''
+                    trivy fs . \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        --format table \
+                        --output trivy-fs-report.txt \
+                        --scanners secret,vuln
+                    cat trivy-fs-report.txt
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'trivy-fs-report.txt', allowEmptyArchive: true
+                }
+            }
+        }
+
+        // ── Stage 4: tfsec Terraform Scan ─────────────────────────────────
+        // Scans Terraform files for security misconfigurations
+        stage('tfsec - Terraform Scan') {
+            steps {
+                echo '🔍 Running tfsec on Terraform files...'
+                sh '''
+                    # Install tfsec if not present
+                    if ! command -v tfsec &> /dev/null; then
+                        curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+                    fi
+
+                    # Scan terraform directory
+                    tfsec terraform/ \
+                        --format lovely \
+                        --out tfsec-report.txt \
+                        --soft-fail || true
+
+                    echo "📄 tfsec scan complete"
+                    cat tfsec-report.txt
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'tfsec-report.txt', allowEmptyArchive: true
+                }
+            }
+        }
+
+        // ── Stage 5: ECR Login ─────────────────────────────────────────────
+        stage('ECR Login') {
+            steps {
+                echo '🔐 Logging into AWS ECR...'
+                sh '''
+                    aws ecr get-login-password --region ${AWS_REGION} | \
+                    docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                    echo "✅ ECR login successful"
+                '''
+            }
+        }
+
+        // ── Stage 6: Build + Trivy Image Scan + Push ──────────────────────
+        stage('Build + Scan + Push to ECR') {
+            steps {
+                echo '🐳 Building, scanning and pushing images...'
+                sh '''
+                    cd src
+                    SERVICES="adservice cartservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice shoppingassistantservice"
+
+                    for SERVICE in $SERVICES; do
+                        ECR_IMAGE="${ECR_REGISTRY}/${PROJECT_NAME}/${SERVICE}"
+
+                        echo "🔨 Building ${SERVICE}..."
+                        docker build \
+                            -t ${ECR_IMAGE}:${IMAGE_TAG} \
+                            -t ${ECR_IMAGE}:latest \
+                            ./${SERVICE}/
+
+                        echo "🔍 Trivy scanning ${SERVICE}..."
+                        trivy image \
+                            --severity HIGH,CRITICAL \
+                            --exit-code 0 \
+                            --format table \
+                            ${ECR_IMAGE}:${IMAGE_TAG}
+
+                        echo "📤 Pushing ${SERVICE} to ECR..."
+                        docker push ${ECR_IMAGE}:${IMAGE_TAG}
+                        docker push ${ECR_IMAGE}:latest
+
+                        echo "✅ ${SERVICE} done"
+                    done
+                '''
+            }
+        }
+
+        // ── Stage 7: Cosign - Sign all images ─────────────────────────────
+        // Signs every image so EKS can verify they came from Jenkins
+        stage('Cosign - Sign Images') {
+            steps {
+                echo '🔏 Signing images with Cosign...'
+                sh '''
+                    # Install Cosign if not present
+                    if ! command -v cosign &> /dev/null; then
+                        curl -O -L "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64"
+                        mv cosign-linux-amd64 /usr/local/bin/cosign
+                        chmod +x /usr/local/bin/cosign
+                    fi
+
+                    # Generate key pair if not exists (first time only)
+                    if [ ! -f cosign.key ]; then
+                        echo "${COSIGN_PASSWORD}" | cosign generate-key-pair \
+                            --output-key-prefix cosign
+                        echo "✅ Cosign key pair generated"
+                    fi
+
+                    SERVICES="adservice cartservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice shoppingassistantservice"
+
+                    for SERVICE in $SERVICES; do
+                        ECR_IMAGE="${ECR_REGISTRY}/${PROJECT_NAME}/${SERVICE}:${IMAGE_TAG}"
+
+                        echo "🔏 Signing ${SERVICE}..."
+                        echo "${COSIGN_PASSWORD}" | cosign sign \
+                            --key cosign.key \
+                            --yes \
+                            ${ECR_IMAGE}
+
+                        echo "✅ ${SERVICE} signed"
+                    done
+
+                    echo "✅ All images signed with Cosign"
+                '''
+            }
+        }
+
+        // ── Stage 8: Update Git Manifests (triggers ArgoCD) ───────────────
+        stage('Update Git Manifests') {
+            steps {
+                echo '📝 Updating image tags - ArgoCD will auto-deploy...'
+                sh '''
+                    SERVICES="adservice cartservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice shoppingassistantservice"
+
+                    git config user.email "jenkins@boutique.com"
+                    git config user.name "Jenkins CI"
+
+                    for SERVICE in $SERVICES; do
+                        ECR_IMAGE="${ECR_REGISTRY}/${PROJECT_NAME}/${SERVICE}"
+                        sed -i "s|${ECR_IMAGE}:.*|${ECR_IMAGE}:${IMAGE_TAG}|g" \
+                            k8s/services/services.yaml
+                    done
+
+                    git add k8s/services/services.yaml
+                    git commit -m "CI: Update images to build #${IMAGE_TAG} [skip ci]"
+                    git push https://${GITHUB_CREDENTIALS_USR}:${GITHUB_CREDENTIALS_PSW}@github.com/pranitpotsure/cloud-native-devsecops-platform.git HEAD:main
+
+                    echo "✅ Git updated - ArgoCD syncing now!"
+                '''
+            }
+        }
+    }
+
+    // ── Post Actions ──────────────────────────────────────────────────────
+    post {
+        success {
+            echo """
+            ✅ ================================================
+            ✅  PIPELINE SUCCESS - Build #${BUILD_NUMBER}
+            ✅  Semgrep: code scanned
+            ✅  Trivy: images scanned
+            ✅  tfsec: terraform scanned
+            ✅  Cosign: images signed
+            ✅  ArgoCD: deploying to EKS
+            ✅ ================================================
+            """
+        }
+        failure {
+            echo """
+            ❌  PIPELINE FAILED - Build #${BUILD_NUMBER}
+            ❌  Check security scan reports above
+            """
+        }
+        always {
+            sh 'docker image prune -f || true'
+        }
+    }
+}

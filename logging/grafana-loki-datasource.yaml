@@ -1,0 +1,37 @@
+# =============================================================================
+# grafana-loki-datasource.yaml
+# Adds Loki as a datasource in Grafana so you can query logs
+# Apply this AFTER grafana.yaml
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+
+      # ── Prometheus (metrics) ────────────────────────────────────────────
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus:9090
+        isDefault: true
+        access: proxy
+        editable: false
+
+      # ── Loki (logs) ─────────────────────────────────────────────────────
+      - name: Loki
+        type: loki
+        url: http://loki:3100
+        access: proxy
+        editable: false
+        jsonData:
+          maxLines: 1000
+          derivedFields:
+            # Link logs to traces if needed later
+            - name: TraceID
+              matcherRegex: "traceID=(\\w+)"
+              url: ""

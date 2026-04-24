@@ -30,15 +30,15 @@ output "ecr_repo_urls" {
   }
 }
 
-output "jenkins_public_ip" {
-  description = "Jenkins EC2 public IP - open http://<this-ip>:8080"
-  value       = aws_instance.jenkins.public_ip
-}
+ # output "jenkins_public_ip" {
+ # description = "Jenkins EC2 public IP - open http://<this-ip>:8080"
+ # value       = aws_instance.jenkins.public_ip
+# }
 
-output "jenkins_ssh_command" {
-  description = "SSH command to connect to Jenkins"
-  value       = "ssh -i your-key.pem ec2-user@${aws_instance.jenkins.public_ip}"
-}
+#output "jenkins_ssh_command" {
+ # description = "SSH command to connect to Jenkins"
+  #value       = "ssh -i your-key.pem ec2-user@${aws_instance.jenkins.public_ip}"
+#}
 
 output "kubectl_config_command" {
   description = "Run this to configure kubectl after cluster is ready"
@@ -56,9 +56,8 @@ output "next_steps" {
     2. Verify cluster:
        kubectl get nodes
 
-    3. Open Jenkins:
-       http://${aws_instance.jenkins.public_ip}:8080
-       (wait 3-5 mins for Jenkins to start)
+    3. Open Jenkins (LOCAL):
+       http://localhost:8090
 
     4. Deploy app:
        kubectl apply -f k8s/

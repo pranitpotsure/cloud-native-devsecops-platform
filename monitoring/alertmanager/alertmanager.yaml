@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: "smtp.gmail.com:587"
+      smtp_from: "pranitpotsure72@gmail.com"
+      smtp_auth_username: "pranitpotsure72@gmail.com"
+      smtp_auth_password: "${GMAIL_APP_PASSWORD}"  # ← placeholder only
+
+    route:
+      group_by: ["alertname", "severity"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: "email-alerts"
+      routes:
+        - match:
+            severity: critical
+          receiver: "email-alerts"
+          group_wait: 10s
+          repeat_interval: 1h
+
+    receivers:
+      - name: "email-alerts"
+        email_configs:
+          - to: "pranitpotsure72@gmail.com"
+            subject: '🚨 [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+            body: |
+              {{ range .Alerts }}
+              Alert: {{ .Annotations.summary }}
+              Description: {{ .Annotations.description }}
+              Severity: {{ .Labels.severity }}
+              Time: {{ .StartsAt }}
+              {{ end }}
+            send_resolved: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:latest
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+          env:
+            # ← env goes HERE in the Deployment, not in ConfigMap
+            - name: GMAIL_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: alertmanager-secret
+                  key: gmail-password
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config

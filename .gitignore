@@ -38,3 +38,9 @@ terraform.tfvars
 # Terraform secrets - NEVER commit these
 terraform/secrets.tf
 terraform/*.tfvars
+
+monitoring/alertmanager/alertmanager-secret.yaml
+
+cosign.key
+cosign.pub
+*.key
