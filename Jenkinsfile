@@ -15,29 +15,31 @@ pipeline {
             }
         }
 
-        stage('Set AWS Env') {
-            steps {
-                script {
-                    env.AWS_ACCOUNT_ID = sh(
-                        script: "aws sts get-caller-identity --query Account --output text",
-                        returnStdout: true
-                    ).trim()
+       stage('Set AWS Env') {
+    steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
+            script {
+                env.AWS_ACCOUNT_ID = sh(
+                    script: "aws sts get-caller-identity --query Account --output text",
+                    returnStdout: true
+                ).trim()
 
-                    env.ECR_REGISTRY = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
-                }
+                env.ECR_REGISTRY = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
             }
         }
+    }
+}
 
         stage('ECR Login') {
-            steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
-                    sh '''
-                        aws ecr get-login-password --region ${AWS_REGION} | \
-                        docker login --username AWS --password-stdin ${ECR_REGISTRY}
-                    '''
-                }
-            }
+    steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
+            sh '''
+                aws ecr get-login-password --region ${AWS_REGION} | \
+                docker login --username AWS --password-stdin ${ECR_REGISTRY}
+            '''
         }
+    }
+}
 
         stage('Build & Push') {
             steps {
